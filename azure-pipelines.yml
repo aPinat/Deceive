@@ -27,13 +27,13 @@ steps:
       platform: '$(buildPlatform)'
       configuration: '$(buildConfiguration)'
 
-- task: GitHubRelease@1
-  displayName: 'GitHub release (create)'
-  inputs:
-    gitHubConnection: GitHub
-    repositoryName: aPinat/Deceive
-    tagSource: userSpecifiedTag
-    tag: '$(Build.BuildNumber)'
-    title: 'Deceive $(Build.BuildNumber)'
-    releaseNotesSource: inline
-    assets: '$(System.DefaultWorkingDirectory)/**/bin/**/*.exe'
+  - task: GitHubRelease@1
+    displayName: 'GitHub release (create)'
+    inputs:
+      gitHubConnection: GitHub
+      repositoryName: aPinat/Deceive
+      tagSource: userSpecifiedTag
+      tag: '$(Build.BuildNumber)'
+      title: 'Deceive $(Build.BuildNumber)'
+      releaseNotesSource: inline
+      assets: '$(System.DefaultWorkingDirectory)/**/bin/**/*.exe'
