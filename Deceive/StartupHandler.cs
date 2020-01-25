@@ -58,7 +58,8 @@ namespace Deceive
             }
 
             // Step 0: Check for updates in the background.
-            Utils.CheckForUpdates();
+            //Skip check for automatic builds from aPinat/Deceive/ci
+            //Utils.CheckForUpdates();
 
             // Step 1: Open a port for our chat proxy, so we can patch chat port into clientconfig.
             var listener = new TcpListener(IPAddress.Loopback, 0);
