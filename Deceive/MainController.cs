@@ -6,6 +6,7 @@ using System.Net.Security;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using System.Xml;
 using System.Xml.Linq;
 using Deceive.Properties;
 
@@ -17,15 +18,16 @@ namespace Deceive
         private bool _enabled = true;
         private string _status;
         private readonly string _statusFile = Path.Combine(Utils.DataDir, "status");
-        
-        private LCUOverlay _overlay;
-        private WindowFollower _follower;
-        
+        private bool _connectToMuc = true;
+
+        private LCUOverlay _overlay = null;
+        private WindowFollower _follower = null;
+
         private SslStream _incoming;
         private SslStream _outgoing;
         private string _lastPresence; // we resend this if the state changes
 
-        internal MainController()
+        internal MainController(bool isLeague)
         {
             _trayIcon = new NotifyIcon
             {
@@ -37,15 +39,20 @@ namespace Deceive
             _trayIcon.ShowBalloonTip(5000);
 
             // Create overlay and start following the LCU with it.
-            var lcu = Process.GetProcessesByName("LeagueClientUx").FirstOrDefault();
-            
-            _overlay = new LCUOverlay();
-            _overlay.Show();
-            _follower = new WindowFollower(_overlay, lcu);
-            _follower.StartFollowing();
-            
+            if (isLeague) CreateOverlay();
+
             LoadStatus();
             UpdateUI();
+        }
+
+        private void CreateOverlay()
+        {
+            var process = Process.GetProcessesByName("LeagueClientUx").First();
+
+            _overlay = new LCUOverlay();
+            _overlay.Show();
+            _follower = new WindowFollower(_overlay, process);
+            _follower.StartFollowing();
         }
 
         private void UpdateUI()
@@ -63,6 +70,34 @@ namespace Deceive
             })
             {
                 Checked = _enabled
+            };
+
+            var overlayMenuItem = new MenuItem("Show status overlay", (a, e) =>
+            {
+                if (_overlay == null)
+                {
+                    CreateOverlay();
+                }
+                else
+                {
+                    _follower.Dispose();
+                    _overlay.Close();
+                    _overlay = null;
+                }
+
+                UpdateUI();
+            })
+            {
+                Checked = _overlay != null
+            };
+
+            var mucMenuItem = new MenuItem("Enable lobby chat", (a, e) =>
+            {
+                _connectToMuc = !_connectToMuc;
+                UpdateUI();
+            })
+            {
+                Checked = _connectToMuc
             };
 
             var offlineStatus = new MenuItem("Offline", (a, e) =>
@@ -104,9 +139,8 @@ namespace Deceive
                 Application.Exit();
             });
 
-            _trayIcon.ContextMenu = new ContextMenu(new[] {aboutMenuItem, enabledMenuItem, typeMenuItem, quitMenuItem});
-            
-            _overlay.UpdateStatus(_status, _enabled);
+            _trayIcon.ContextMenu = new ContextMenu(new[] {aboutMenuItem, enabledMenuItem, typeMenuItem, overlayMenuItem, mucMenuItem, quitMenuItem});
+            _overlay?.UpdateStatus(_status, _enabled);
         }
 
         public void StartThreads(SslStream incoming, SslStream outgoing)
@@ -130,6 +164,8 @@ namespace Deceive
                     byteCount = _incoming.Read(bytes, 0, bytes.Length);
 
                     var content = Encoding.UTF8.GetString(bytes, 0, byteCount);
+                    Debug.WriteLine("FROM RC: " + content);
+
                     // If this is possibly a presence stanza, rewrite it.
                     if (content.Contains("<presence") && _enabled)
                     {
@@ -141,9 +177,13 @@ namespace Deceive
                     }
                 } while (byteCount != 0);
             }
+            catch (Exception e)
+            {
+                Trace.WriteLine(e);
+            }
             finally
             {
-                Console.WriteLine(@"Incoming closed.");
+                Trace.WriteLine(@"Incoming closed.");
                 SaveStatus();
                 Application.Exit();
             }
@@ -159,14 +199,16 @@ namespace Deceive
                 do
                 {
                     byteCount = _outgoing.Read(bytes, 0, bytes.Length);
+                    Debug.WriteLine("TO RC: " + Encoding.UTF8.GetString(bytes, 0, byteCount));
                     _incoming.Write(bytes, 0, byteCount);
                 } while (byteCount != 0);
 
-                Console.WriteLine(@"Outgoing closed.");
+                Trace.WriteLine(@"Outgoing closed.");
             }
-            catch
+            catch (Exception e)
             {
-                Console.WriteLine(@"Outgoing errored.");
+                Trace.WriteLine(e);
+                Trace.WriteLine(@"Outgoing errored.");
                 SaveStatus();
                 Application.Exit();
             }
@@ -181,14 +223,18 @@ namespace Deceive
                 var xml = XDocument.Load(new StringReader(wrappedContent));
 
                 if (xml.Root == null) return;
-                
+                if (xml.Root.HasElements == false) return;
+
                 foreach (var presence in xml.Root.Elements())
                 {
-                    Console.WriteLine(presence);
-                    if (presence.Name != "presence") continue; 
-                    if (presence.Attribute("to") != null) continue;
-                    
-                    presence.Element("show").Value = targetStatus;
+                    if (presence.Name != "presence") continue;
+                    if (presence.Attribute("to") != null)
+                    {
+                        if (_connectToMuc) continue;
+                        presence.Remove();
+                    }
+
+                    presence.Element("show")?.ReplaceNodes(targetStatus);
 
                     if (targetStatus == "chat") continue;
                     presence.Element("status")?.Remove();
@@ -196,17 +242,28 @@ namespace Deceive
 
                     //Remove Legends of Runeterra presence
                     presence.Element("games")?.Element("bacon")?.Remove();
+
+                    //Remove VALORANT presence
+                    presence.Element("games")?.Element("valorant")?.Remove();
                 }
-                    
-                var xmlOut = string.Join("", xml.Root.Elements().Select(o => o.ToString()));
-                _outgoing.Write(Encoding.UTF8.GetBytes(xmlOut));
-                Console.WriteLine(xmlOut);
+
+                var sb = new StringBuilder();
+                var xws = new XmlWriterSettings {OmitXmlDeclaration = true, Encoding = Encoding.UTF8, ConformanceLevel = ConformanceLevel.Fragment};
+                using (var xw = XmlWriter.Create(sb, xws))
+                {
+                    foreach (var xElement in xml.Root.Elements())
+                    {
+                        xElement.WriteTo(xw);
+                    }
+                }
+
+                _outgoing.Write(Encoding.UTF8.GetBytes(sb.ToString()));
+                Debug.WriteLine("DECEIVE: " + sb);
             }
-            catch
+            catch (Exception e)
             {
-                Console.WriteLine(@"Error rewriting presence.");
-                //Don't send raw value.
-                //_outgoing.Write(Encoding.UTF8.GetBytes(content));
+                Trace.WriteLine(e);
+                Trace.WriteLine(@"Error rewriting presence.");
             }
         }
 
