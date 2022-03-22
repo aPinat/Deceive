@@ -1,0 +1,27 @@
+﻿name: Build and publish release
+
+on:
+  push:
+    branches: 
+      - ci
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build
+        run: dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
+      - shell: bash
+        run: echo "TAG_NAME=$(date +%Y%m%d.%H%M%S)" >> $GITHUB_ENV
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: "**/bin/**/publish/*.exe"
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          tag_name: ${{ env.TAG_NAME }}
+          name: Deceive ${{ env.TAG_NAME }}
