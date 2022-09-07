@@ -2,7 +2,7 @@
 
 on:
   push:
-    branches: 
+    branches:
       - ci
 
 permissions:
@@ -13,14 +13,16 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: microsoft/setup-msbuild@v1.1
+      - run: nuget restore Deceive.sln
       - name: Build
-        run: dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
+        run: msbuild Deceive.sln -t:rebuild -property:Configuration=Release
       - shell: bash
         run: echo "TAG_NAME=$(date +%Y%m%d.%H%M%S)" >> $GITHUB_ENV
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: "**/bin/**/publish/*.exe"
+          files: "**/bin/**/*.exe"
           fail_on_unmatched_files: true
           generate_release_notes: true
           tag_name: ${{ env.TAG_NAME }}
