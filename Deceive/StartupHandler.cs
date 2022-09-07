@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -25,7 +25,6 @@ internal static class StartupHandler
     {
         AppDomain.CurrentDomain.UnhandledException += CurrentDomainOnUnhandledException;
         Application.EnableVisualStyles();
-        Application.SetHighDpiMode(HighDpiMode.SystemAware);
         try
         {
             await StartDeceiveAsync(args, gamePatchline, riotClientParams, gameParams);
@@ -63,13 +62,13 @@ internal static class StartupHandler
 
             if (result is not DialogResult.Yes)
                 return;
-            await Utils.KillProcesses();
+            Utils.KillProcesses();
             await Task.Delay(2000); // Riot Client takes a while to die
         }
 
         try
         {
-            await File.WriteAllTextAsync(Path.Combine(Persistence.DataDir, "debug.log"), string.Empty);
+            File.WriteAllText(Path.Combine(Persistence.DataDir, "debug.log"), string.Empty);
             Trace.Listeners.Add(new TextWriterTraceListener(Path.Combine(Persistence.DataDir, "debug.log")));
             Debug.AutoFlush = true;
             Trace.WriteLine(DeceiveTitle);
@@ -89,13 +88,13 @@ internal static class StartupHandler
         Trace.WriteLine($"Chat proxy listening on port {port}");
 
         // Step 2: Find the Riot Client.
-        var riotClientPath = await Utils.GetRiotClientPath();
+        var riotClientPath = Utils.GetRiotClientPath();
 
         // If the riot client doesn't exist, the user is either severely outdated or has a bugged install.
         if (riotClientPath is null)
         {
             MessageBox.Show(
-                "Deceive was unable to find the path to the Riot Client. Usually this can be resolved by launching any Riot Games game once, then launching Deceive again." +
+                "Deceive was unable to find the path to the Riot Client. Usually this can be resolved by launching any Riot Games game once, then launching Deceive again. " +
                 "If this does not resolve the issue, please file a bug report through GitHub (https://github.com/molenzwiebel/Deceive) or Discord.",
                 DeceiveTitle,
                 MessageBoxButtons.OK,
@@ -108,7 +107,7 @@ internal static class StartupHandler
 
         // If launching "auto", use the persisted launch game (which defaults to prompt).
         if (game is LaunchGame.Auto)
-            game = await Persistence.GetDefaultLaunchGameAsync();
+            game = Persistence.GetDefaultLaunchGame();
 
         // If prompt, display dialog.
         if (game is LaunchGame.Prompt)
@@ -150,13 +149,7 @@ internal static class StartupHandler
         // Kill Deceive when Riot Client has exited, so no ghost Deceive exists.
         if (riotClient is not null)
         {
-            riotClient.EnableRaisingEvents = true;
-            riotClient.Exited += async (_, _) =>
-            {
-                Trace.WriteLine("Exiting on Riot Client exit.");
-                await Task.Delay(3000); // in case of restart, let us kill ourselves elsewhere
-                Environment.Exit(0);
-            };
+            ListenToRiotClientExit(riotClient);
         }
 
         // Step 5: Get chat server and port for this player by listening to event from ConfigProxy.
@@ -220,7 +213,7 @@ internal static class StartupHandler
                 {
                     Trace.WriteLine(e);
                     var result = MessageBox.Show(
-                        "Unable to reconnect to the chat server. Please check your internet connection." +
+                        "Unable to reconnect to the chat server. Please check your internet connection. " +
                         "If this issue persists and you can connect to chat normally without Deceive, " +
                         "please file a bug report through GitHub (https://github.com/molenzwiebel/Deceive) or Discord.",
                         DeceiveTitle,
@@ -244,5 +237,27 @@ internal static class StartupHandler
         // Log all unhandled exceptions
         Trace.WriteLine(e.ExceptionObject as Exception);
         Trace.WriteLine(Environment.StackTrace);
+    }
+
+    private static void ListenToRiotClientExit(Process riotClientProcess)
+    {
+        riotClientProcess.EnableRaisingEvents = true;
+        riotClientProcess.Exited += async (sender, e) =>
+        {
+            Trace.WriteLine("Detected Riot Client exit.");
+            await Task.Delay(3000); // wait for a bit to ensure this is not a relaunch triggered by the RC
+
+            var newProcess = Utils.GetRiotClientProcess();
+            if (newProcess is not null)
+            {
+                Trace.WriteLine("A new Riot Client process spawned, monitoring that for exits.");
+                ListenToRiotClientExit(newProcess);
+            }
+            else
+            {
+                Trace.WriteLine("No new clients spawned after waiting, killing ourselves.");
+                Environment.Exit(0);
+            }
+        };
     }
 }
